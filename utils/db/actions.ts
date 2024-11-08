@@ -1,7 +1,7 @@
 import { db } from "./dbConfig";
 import { Users, Subscriptions, GeneratedContent } from "./schema";
 import { eq, sql, and, desc } from "drizzle-orm";
-import { sendWelcomeEmail } from "../mailtrap";
+import { sendWelcomeEmail, initMailtrap } from "../mailtrap";
 
 export async function updateUserPoints(userId: string, points: number) {
   try {
@@ -15,6 +15,26 @@ export async function updateUserPoints(userId: string, points: number) {
   } catch (error) {
     console.error("Error updating user points:", error);
     return null;
+  }
+}
+
+export async function getUserPoints(userId: string) {
+  try {
+    console.log("Fetching points for user:", userId);
+    const users = await db
+      .select({ points: Users.points, id: Users.id, email: Users.email })
+      .from(Users)
+      .where(eq(Users.stripeCustomerId, userId))
+      .execute();
+    console.log("Fetched users:", users);
+    if (users.length === 0) {
+      console.log("No user found with stripeCustomerId:", userId);
+      return 0;
+    }
+    return users[0].points || 0;
+  } catch (error) {
+    console.error("Error fetching user points:", error);
+    return 0;
   }
 }
 
@@ -45,7 +65,6 @@ export async function createOrUpdateSubscription(
       .limit(1);
 
     let subscription;
-
     if (existingSubscription.length > 0) {
       // Update existing subscription
       [subscription] = await db
@@ -79,6 +98,60 @@ export async function createOrUpdateSubscription(
   } catch (error) {
     console.error("Error creating or updating subscription:", error);
     return null;
+  }
+}
+
+export async function saveGeneratedContent(
+  userId: string,
+  content: string,
+  prompt: string,
+  contentType: string
+) {
+  try {
+    const [savedContent] = await db
+      .insert(GeneratedContent)
+      .values({
+        userId: sql`(SELECT id FROM ${Users} WHERE stripe_customer_id = ${userId})`,
+        content,
+        prompt,
+        contentType,
+      })
+      .returning()
+      .execute();
+    return savedContent;
+  } catch (error) {
+    console.error("Error saving generated content:", error);
+    return null;
+  }
+}
+
+export async function getGeneratedContentHistory(
+  userId: string,
+  limit: number = 10
+) {
+  try {
+    const history = await db
+      .select({
+        id: GeneratedContent.id,
+        content: GeneratedContent.content,
+        prompt: GeneratedContent.prompt,
+        contentType: GeneratedContent.contentType,
+        createdAt: GeneratedContent.createdAt,
+      })
+      .from(GeneratedContent)
+      .where(
+        eq(
+          GeneratedContent.userId,
+          sql`(SELECT id FROM ${Users} WHERE stripe_customer_id = ${userId})`
+        )
+      )
+      .orderBy(desc(GeneratedContent.createdAt))
+      .limit(limit)
+      .execute();
+    return history;
+  } catch (error) {
+    console.error("Error fetching generated content history:", error);
+    return [];
   }
 }
 
